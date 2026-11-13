@@ -5,14 +5,39 @@
 
 const fs = require("fs");
 
+// Latest attempt per txn_id: txn_id -> { ts, status, amount }
+const latest = new Map();
+
+// Amounts may be numbers or strings with thousands separators ("4,804.15").
+function parseAmount(value) {
+  if (typeof value === "number") return value;
+  return Number(String(value).replace(/,/g, "").trim());
+}
+
+const lines = fs.readFileSync("payments.jsonl", "utf8").split("\n").filter((l) => l.trim().length > 0);
+for (const line of lines) {
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch (e) {
+    continue; // unreadable line
+  }
+  if (event === null || typeof event !== "object" || Array.isArray(event)) continue;
+  if (!event.txn_id) continue; // no txn_id
+
+  // ISO-8601 UTC timestamps compare correctly as text; >= means a later line
+  // wins if two attempts share the exact same timestamp.
+  const prev = latest.get(event.txn_id);
+  if (prev === undefined || event.ts >= prev.ts) {
+    latest.set(event.txn_id, { ts: event.ts, status: event.status, amount: event.amount });
+  }
+}
+
 let total = 0;
 let count = 0;
-
-const lines = fs.readFileSync("payments.jsonl", "utf8").split("\n").filter((l) => l.length > 0);
-for (const line of lines) {
-  const event = JSON.parse(line);
-  if (event.status === "success") {
-    total += Number(event.amount);
+for (const { status, amount } of latest.values()) {
+  if (status === "success") {
+    total += parseAmount(amount);
     count += 1;
   }
 }
